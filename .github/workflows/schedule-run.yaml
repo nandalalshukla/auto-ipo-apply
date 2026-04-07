@@ -1,0 +1,113 @@
+name: Meroshare IPO Automation
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "0 6 * * *" # Runs daily at 11:45 AM NPT; 6:00 AM UTC
+  workflow_dispatch: # Allows manual runs
+
+jobs:
+  cypress-run:
+    runs-on: ubuntu-22.04
+    env:
+      EMAIL_SERVER_ADDRESS: ""
+      EMAIL_SERVER_PORT: ""
+      EMAIL_USERNAME: ""
+      EMAIL_PASSWORD: ""
+      EMAIL_FROM: ""
+      EMAIL_TO: ""
+      NOTIFY_STATUS: ""
+      NOTIFY_MESSAGE: ""
+      NOTIFY_ATTACHMENTS: ""
+    strategy:
+      matrix:
+        env: ["NANDALAL", "PURUSHOTTAM", "RINKU", "RICHA", "PUSPA", "PURNIMA"] # Hardcoded environments
+
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Step 2: Read .env and set up the environment
+      - name: Setup environment for ${{ matrix.env }}
+        env:
+          ENV_FILE: ${{ secrets[matrix.env] }}
+        run: |
+          echo "$ENV_FILE" > .env
+          echo "Environment for ${{ matrix.env }} configured."
+
+      # Step 3: Run Cypress
+      - name: Cypress run for ${{ matrix.env }}
+        uses: cypress-io/github-action@v6
+
+      # Step 4: Upload artifacts (videos)
+      - name: Upload Cypress videos for ${{ matrix.env }}
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-videos-${{ matrix.env }}
+          path: cypress/videos
+          retention-days: 30
+
+      # Step 5: Prepare email notification context
+      - name: Prepare email notification
+        if: always()
+        run: |
+          # Extract SMTP values from .env and trim spaces
+          EMAIL_SERVER_ADDRESS=$(grep '^EMAIL_SERVER_ADDRESS' .env | cut -d '=' -f2 | tr -d '"' | xargs)
+          EMAIL_SERVER_PORT=$(grep '^EMAIL_SERVER_PORT' .env | cut -d '=' -f2 | tr -d '"' | xargs)
+          EMAIL_USERNAME=$(grep '^EMAIL_USERNAME' .env | cut -d '=' -f2 | tr -d '"' | xargs)
+          EMAIL_PASSWORD=$(grep '^EMAIL_PASSWORD' .env | cut -d '=' -f2 | tr -d '"' | xargs)
+          EMAIL_FROM=$(grep '^EMAIL_FROM' .env | cut -d '=' -f2 | tr -d '"' | xargs)
+          EMAIL_TO=$(grep '^EMAIL_TO' .env | cut -d '=' -f2 | tr -d '"' | xargs)
+
+          if [ -z "$EMAIL_SERVER_ADDRESS" ] || [ -z "$EMAIL_SERVER_PORT" ] || [ -z "$EMAIL_USERNAME" ] || [ -z "$EMAIL_PASSWORD" ] || [ -z "$EMAIL_FROM" ] || [ -z "$EMAIL_TO" ]; then
+            echo "Missing email variables. Please set EMAIL_SERVER_ADDRESS, EMAIL_SERVER_PORT, EMAIL_USERNAME, EMAIL_PASSWORD, EMAIL_FROM, and EMAIL_TO in .env secret."
+            exit 1
+          fi
+
+          STATUS="SUCCESS"
+          if [ "${{ job.status }}" != "success" ]; then
+            STATUS="FAILED"
+          fi
+
+          MESSAGE=$(node -e "const fs=require('fs'); try { const d=JSON.parse(fs.readFileSync('cypress/results/run-status.json','utf8')); process.stdout.write(d.message || 'Cypress run completed.'); } catch(e) { process.stdout.write('Cypress run completed.'); }")
+          ATTACHMENTS=$(find cypress/videos cypress/screenshots -type f 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+
+          echo "EMAIL_SERVER_ADDRESS=$EMAIL_SERVER_ADDRESS" >> "$GITHUB_ENV"
+          echo "EMAIL_SERVER_PORT=$EMAIL_SERVER_PORT" >> "$GITHUB_ENV"
+          echo "EMAIL_USERNAME=$EMAIL_USERNAME" >> "$GITHUB_ENV"
+          echo "EMAIL_PASSWORD=$EMAIL_PASSWORD" >> "$GITHUB_ENV"
+          echo "EMAIL_FROM=$EMAIL_FROM" >> "$GITHUB_ENV"
+          echo "EMAIL_TO=$EMAIL_TO" >> "$GITHUB_ENV"
+          echo "NOTIFY_STATUS=$STATUS" >> "$GITHUB_ENV"
+          echo "NOTIFY_MESSAGE=$MESSAGE" >> "$GITHUB_ENV"
+          echo "NOTIFY_ATTACHMENTS=$ATTACHMENTS" >> "$GITHUB_ENV"
+
+      # Step 6: Send email with status and videos
+      - name: Send email notification
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ env.EMAIL_SERVER_ADDRESS }}
+          server_port: ${{ env.EMAIL_SERVER_PORT }}
+          username: ${{ env.EMAIL_USERNAME }}
+          password: ${{ env.EMAIL_PASSWORD }}
+          subject: Meroshare Automation ${{ env.NOTIFY_STATUS }} - ${{ matrix.env }}
+          to: ${{ env.EMAIL_TO }}
+          from: ${{ env.EMAIL_FROM }}
+          body: |
+            Meroshare Cypress run completed.
+
+            Message: ${{ env.NOTIFY_MESSAGE }}
+
+            Status: ${{ env.NOTIFY_STATUS }}
+            Environment: ${{ matrix.env }}
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Triggered by: ${{ github.actor }}
+            Run URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          attachments: ${{ env.NOTIFY_ATTACHMENTS }}
