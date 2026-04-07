@@ -24,8 +24,8 @@ jobs:
       NOTIFY_ATTACHMENTS: ""
     strategy:
       matrix:
-        env: ["NANDALAL", "PURUSHOTTAM", "RINKU", "RICHA", "PUSPA", "PURNIMA"] # Hardcoded environments
-
+        env: ["NANDALAL"] # Hardcoded environments
+# , "PURUSHOTTAM", "RINKU", "RICHA", "PUSPA", "PURNIMA"
     steps:
       # Step 1: Checkout code
       - name: Checkout
